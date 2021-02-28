@@ -77,7 +77,6 @@ probe_enter(enum xchg_type xtype, const struct nlmsghdr *nlh, const struct nlatt
 		break;
 		;;
 	case EXCHANGE_RENAME:
-		bpf_probe_read_user_str(&xchg->ipset_newname, IPSET_MAXNAMELEN, nla_data(nla[IPSET_ATTR_TYPENAME]));
 		break;
 		;;
 	case EXCHANGE_SWAP:
@@ -142,10 +141,12 @@ int BPF_KPROBE(__find_set_type_get, char *name)
 	u64 id1 = bpf_get_current_pid_tgid();
 	u32 tgid = id1 >> 32, pid = id1;
 
+	if (!(xchg = bpf_map_lookup_elem(&ongoing, &tgid)))
+		return 0;
+
 	switch (xchg->xtype) {
 	case EXCHANGE_CREATE:
-		if ((xchg = bpf_map_lookup_elem(&ongoing, &tgid)))
-			bpf_probe_read_kernel_str(&xchg->ipset_type, IPSET_MAXNAMELEN, name);
+		bpf_probe_read_kernel_str(&xchg->ipset_type, IPSET_MAXNAMELEN, name);
 		break;
 		;;
 	default:
@@ -164,10 +165,12 @@ int BPF_KPROBE(find_set_and_id, struct ip_set_net *inst, char *name)
 	u64 id1 = bpf_get_current_pid_tgid();
 	u32 tgid = id1 >> 32, pid = id1;
 
+	if (!(xchg = bpf_map_lookup_elem(&ongoing, &tgid)))
+		return 0;
+
 	switch (xchg->xtype) {
 	case EXCHANGE_SWAP:
-		if ((xchg = bpf_map_lookup_elem(&ongoing, &tgid)))
-			bpf_probe_read_kernel_str(&xchg->ipset_newname, IPSET_MAXNAMELEN, name);
+		bpf_probe_read_kernel_str(&xchg->ipset_newname, IPSET_MAXNAMELEN, name);
 		break;
 		;;
 	default:
