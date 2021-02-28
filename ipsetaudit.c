@@ -6,9 +6,13 @@
 #include <unistd.h>
 #include <time.h>
 #include <pwd.h>
+#include <fcntl.h>
+#include <syslog.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
@@ -16,6 +20,8 @@
 #include "ipsetaudit.h"
 #include "ipsetaudit.skel.h"
 
+int daemonize = 0;
+static int bpfverbose = 0;
 static volatile bool exiting;
 
 // GENERAL
@@ -79,6 +85,69 @@ char *get_username(uint32_t uid)
 	return username;
 }
 
+// LOGGING RELATED
+
+void initlog()
+{
+	openlog(NULL, LOG_CONS | LOG_NDELAY | LOG_PID, LOG_USER);
+}
+
+void endlog()
+{
+	closelog();
+}
+
+// DAEMON RELATED
+
+int makemeadaemon(void)
+{
+	int fd;
+
+	fprintf(stdout, "Daemon mode. Check syslog for messages!\n");
+
+	switch(fork()) {
+	case -1:	return -1;
+	case 0:		break;
+	default:	exit(0);
+	}
+
+	if (setsid() == -1)
+		return -1;
+
+	switch(fork()) {
+	case -1:	return -1;
+	case 0:		break;
+	default:	exit(0);
+	}
+
+	umask(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+	if (chdir("/") == -1)
+		return -1;
+
+	close(0); close(1); close(2);
+
+	fd = open("/dev/null", O_RDWR);
+
+	if (fd != 0)
+		return -1;
+	if (dup2(0, 1) != 1)
+		return -1;
+	if (dup2(0, 2) != 2)
+		return -1;
+
+	return 0;
+}
+
+int dontmakemeadaemon(void)
+{
+	fprintf(stdout, "Foreground mode...<Ctrl-C> or or SIG_TERM to end it.\n");
+
+	umask(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+	return 0;
+}
+
 // OUTPUT
 
 static int print_created(int fd)
@@ -101,28 +170,28 @@ static int print_created(int fd)
 
 		switch (xchg.xtype) {
 		case EXCHANGE_CREATE:
-			printf("(%s) %s (pid: %d) - CREATE %s (type: %s) - %s\n",
+			OUTPUT("(%s) %s (pid: %d) - CREATE %s (type: %s) - %s\n",
 				currtime, xchg.comm, next_key,
 				xchg.ipset_name, xchg.ipset_type,
 				xchg.ret ? "ERROR" : "SUCCESS");
 			goto after;
 			;;
 		case EXCHANGE_SWAP:
-			printf("(%s) %s (pid: %d) - SWAP %s <-> %s - %s\n",
+			OUTPUT("(%s) %s (pid: %d) - SWAP %s <-> %s - %s\n",
 				currtime, xchg.comm, next_key,
 				xchg.ipset_name, xchg.ipset_newname,
 				xchg.ret ? "ERROR" : "SUCCESS");
 			goto after;
 			;;
 		case EXCHANGE_DUMP:
-			printf("(%s) %s (pid: %d) - SAVE/LIST %s - %s\n",
+			OUTPUT("(%s) %s (pid: %d) - SAVE/LIST %s - %s\n",
 				currtime, xchg.comm, next_key,
 				xchg.ipset_name,
 				xchg.ret ? "ERROR" : "SUCCESS");
 			goto after;
 			;;
 		case EXCHANGE_RENAME:
-			printf("(%s) %s (pid: %d) - RENAME %s -> %s - %s\n",
+			OUTPUT("(%s) %s (pid: %d) - RENAME %s -> %s - %s\n",
 				currtime, xchg.comm, next_key,
 				xchg.ipset_name, xchg.ipset_newname,
 				xchg.ret ? "ERROR" : "SUCCESS");
@@ -130,7 +199,7 @@ static int print_created(int fd)
 			;;
 		case EXCHANGE_TEST:
 			what = "TEST";
-			printf("(%s) %s (pid: %d) - %s %s\n",
+			OUTPUT("(%s) %s (pid: %d) - %s %s\n",
 				currtime, xchg.comm, next_key,
 				what, xchg.ipset_name);
 			goto after;
@@ -153,7 +222,7 @@ static int print_created(int fd)
 			;;
 		}
 
-		printf("(%s) %s (pid: %d) - %s %s - %s\n",
+		OUTPUT("(%s) %s (pid: %d) - %s %s - %s\n",
 			currtime, xchg.comm, next_key,
 			what, xchg.ipset_name,
 		        xchg.ret ? "ERROR" : "SUCCESS");
@@ -171,7 +240,7 @@ after:
 	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
 
 		if((err = bpf_map_delete_elem(fd, &next_key)) < 0)
-			EXITERR("failed to cleanup created: %d\n", err);
+			EXITERR("failed to cleanup created: %d", err);
 
 		lookup_key = next_key;
 	}
@@ -181,41 +250,84 @@ after:
 
 int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 {
+	if (level == LIBBPF_DEBUG && !bpfverbose)
+		return 0;
+
 	return vfprintf(stderr, format, args);
+}
+
+// USAGE
+
+int usage(int argc, char **argv)
+{
+	fprintf(stdout,
+		"\n"
+		"Syntax: %s [options]\n"
+		"\n"
+		"\t[options]:\n"
+		"\n"
+		"\t-v: bpf verbose mode\n"
+		"\t-d: daemon mode (output to syslog)\n"
+		"\n"
+		"Check https://rafaeldtinoco.github.io/ipsetaudit/ for more info!\n"
+		"\n",
+		argv[0]);
+
+	exit(0);
 }
 
 // EBPF USERLAND PORTION
 
 int main(int argc, char **argv)
 {
+	int opt, err = 0, pid_max, fd;
 	struct ipsetaudit_bpf *obj;
-	int err, pid_max, fd;
+
+	while ((opt = getopt(argc, argv, "hvd")) != -1) {
+		switch(opt) {
+		case 'v':
+			bpfverbose = 1;
+			break;
+		case 'd':
+			daemonize = 1;
+			break;
+		case 'h':
+		default:
+			usage(argc, argv);
+		}
+	}
+
+	daemonize ? err = makemeadaemon() : dontmakemeadaemon();
+
+	if (err == -1)
+		EXITERR("failed to become a deamon");
+
+	if (daemonize)
+		initlog();
 
 	libbpf_set_print(libbpf_print_fn);
 
 	if ((err = bump_memlock_rlimit()))
-		EXITERR("failed to increase rlimit: %d\n", err);
+		EXITERR("failed to increase rlimit: %d", err);
 
 	if (!(obj = ipsetaudit_bpf__open()))
-		EXITERR("failed to open BPF object\n");
+		EXITERR("failed to open BPF object");
 
 	if ((pid_max = get_pid_max()) < 0)
-		EXITERR("failed to get pid_max\n");
+		EXITERR("failed to get pid_max");
 
 	bpf_map__resize(obj->maps.exchange, pid_max);
 	bpf_map__resize(obj->maps.ongoing, pid_max);
 
 	if ((err = ipsetaudit_bpf__load(obj)))
-		CLEANERR("failed to load BPF object: %d\n", err);
+		CLEANERR("failed to load BPF object: %d", err);
 
 	if ((err = ipsetaudit_bpf__attach(obj)))
-		CLEANERR("failed to attach BPF programs\n");
+		CLEANERR("failed to attach BPF programs");
 
 	fd = bpf_map__fd(obj->maps.exchange);
 
 	signal(SIGINT, sig_handler);
-
-	printf("Tracing ipset commands... Hit Ctrl-C to end.\n");
 
 	while (1) {
 		if ((err = print_created(fd)))
@@ -228,6 +340,10 @@ int main(int argc, char **argv)
 	}
 
 cleanup:
+	if (daemonize)
+		endlog();
+
 	ipsetaudit_bpf__destroy(obj);
+
 	return err != 0;
 }

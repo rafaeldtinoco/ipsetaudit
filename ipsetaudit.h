@@ -3,9 +3,23 @@
 
 // GENERAL
 
+extern int daemonize;
+
 #define TASK_COMM_LEN 16
 
 #define HERE fprintf(stderr, "line %d, file %s, function %s\n", __LINE__, __FILE__, __func__)
+
+#define OUTPUT(...)						\
+{								\
+	switch (daemonize) {					\
+	case 0:							\
+		fprintf(stdout, __VA_ARGS__);			\
+		break;						\
+	case 1:							\
+		syslog(LOG_USER | LOG_INFO, __VA_ARGS__);	\
+		break;						\
+	}							\
+}
 
 #define EXITERR(...)			\
 {					\
