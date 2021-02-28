@@ -123,7 +123,15 @@ static int print_created(int fd)
 			;;
 		case EXCHANGE_DUMP:
 			what = "DUMP";
-			break;
+			printf("(%s) user: %s (%d), command: %s (pid: %d) - IPSET %s (SAVE/LIST)\n",
+				currtime, username, xchg.uid, xchg.comm, next_key, what);
+			goto after;
+			;;
+		case EXCHANGE_TEST:
+			what = "TEST";
+			printf("(%s) user: %s (%d), command: %s (pid: %d) - IPSET %s\n",
+				currtime, username, xchg.uid, xchg.comm, next_key, what);
+			goto after;
 			;;
 		case EXCHANGE_RENAME:
 			what = "RENAME";
@@ -135,8 +143,8 @@ static int print_created(int fd)
 		}
 
 		printf("(%s) user: %s (%d), command: %s (pid: %d) - %s ipset %s - %s\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what,
-				xchg.ipset_name, xchg.ret ? "ERROR" : "SUCCESS");
+			currtime, username, xchg.uid, xchg.comm, next_key, what,
+			xchg.ipset_name, xchg.ret ? "ERROR" : "SUCCESS");
 after:
 		if (username != NULL)
 			free(username);

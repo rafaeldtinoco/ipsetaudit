@@ -92,6 +92,9 @@ probe_enter(enum xchg_type xtype, struct nlmsghdr *nlh, struct nlattr *attr[])
 	case EXCHANGE_DUMP:
 		break;
 		;;
+	case EXCHANGE_TEST:
+		break;
+		;;
 	}
 
 	return 0;
@@ -138,6 +141,14 @@ int BPF_KPROBE(ip_set_dump, struct net *net, struct sock *ctnl, struct sk_buff *
 {
 	return probe_enter(EXCHANGE_DUMP, nlh, attr);
 }
+
+SEC("kprobe/ip_set_utest")
+int BPF_KPROBE(ip_set_utest, struct net *net, struct sock *ctnl, struct sk_buff *skb,
+		struct nlmsghdr *nlh, struct nlattr *attr[])
+{
+	return probe_enter(EXCHANGE_TEST, nlh, attr);
+}
+
 
 /*
  * Use similar approach if pointer can't be calculated in previous probes
@@ -202,7 +213,15 @@ probe_return(enum xchg_type xtype, int ret)
 	if (!(xchg = bpf_map_lookup_elem(&ongoing, &tgid)))
 		return 0;
 
-	xchg->ret = ret;
+	switch (xchg->xtype) {
+	case EXCHANGE_DUMP:
+		xchg->ret = 0;
+		break;
+	default:
+		xchg->ret = ret;
+		break;
+	}
+
 	bpf_map_update_elem(&exchange, &tgid, xchg, 0);
 	bpf_map_delete_elem(&ongoing, &tgid);
 
@@ -244,5 +263,12 @@ int BPF_KRETPROBE(ip_set_dump_ret, int ret)
 {
 	return probe_return(EXCHANGE_DUMP, ret);
 }
+
+SEC("kretprobe/ip_set_utest")
+int BPF_KRETPROBE(ip_set_utest_ret, int ret)
+{
+	return probe_return(EXCHANGE_TEST, ret);
+}
+
 
 char LICENSE[] SEC("license") = "GPL";
