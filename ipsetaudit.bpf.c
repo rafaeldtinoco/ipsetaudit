@@ -25,7 +25,7 @@ static struct exchange initial_xchg;
 
 // NETLINK RELATED
 
-static __always_inline void *nla_data(const struct nlattr *nla)
+static __always_inline void *nla_data(struct nlattr *nla)
 {
 	return (char *) nla + NLA_HDRLEN;
 }
@@ -33,7 +33,7 @@ static __always_inline void *nla_data(const struct nlattr *nla)
 // IP_SET RELATED
 
 static __always_inline int
-probe_enter(enum xchg_type xtype, const struct nlmsghdr *nlh, const struct nlattr *attr[])
+probe_enter(enum xchg_type xtype, struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	struct exchange *xchg;
 	u64 id1 = bpf_get_current_pid_tgid();
@@ -62,12 +62,15 @@ probe_enter(enum xchg_type xtype, const struct nlmsghdr *nlh, const struct nlatt
 
 	// netlink packages parsing
 
-	struct nlattr *nla[IPSET_ATTR_CREATE_MAX + 1] = {};
-	bpf_probe_read_kernel(&nla, (IPSET_ATTR_CREATE_MAX + 1), attr);
-	bpf_probe_read_kernel_str(&xchg->ipset_name, IPSET_MAXNAMELEN, nla_data(nla[IPSET_ATTR_SETNAME]));
+	struct nlattr *nla_name, *nla_name2, *nla_type;
+
+	bpf_probe_read_kernel(&nla_name, sizeof(void *), &attr[IPSET_ATTR_SETNAME]);
+	bpf_probe_read_kernel_str(&xchg->ipset_name, IPSET_MAXNAMELEN, nla_data(nla_name));
 
 	switch (xchg->xtype) {
 	case EXCHANGE_CREATE:
+		bpf_probe_read_kernel(&nla_type, sizeof(void *), &attr[IPSET_ATTR_TYPENAME]);
+		bpf_probe_read_kernel_str(&xchg->ipset_type, IPSET_MAXNAMELEN, nla_data(nla_type));
 		break;
 		;;
 	case EXCHANGE_DESTROY:
@@ -77,9 +80,13 @@ probe_enter(enum xchg_type xtype, const struct nlmsghdr *nlh, const struct nlatt
 		break;
 		;;
 	case EXCHANGE_RENAME:
+		bpf_probe_read_kernel(&nla_name2, sizeof(void *), &attr[IPSET_ATTR_SETNAME2]);
+		bpf_probe_read_kernel_str(&xchg->ipset_newname, IPSET_MAXNAMELEN, nla_data(nla_name2));
 		break;
 		;;
 	case EXCHANGE_SWAP:
+		bpf_probe_read_kernel(&nla_name2, sizeof(void *), &attr[IPSET_ATTR_SETNAME2]);
+		bpf_probe_read_kernel_str(&xchg->ipset_newname, IPSET_MAXNAMELEN, nla_data(nla_name2));
 		break;
 		;;
 	case EXCHANGE_DUMP:
@@ -92,46 +99,50 @@ probe_enter(enum xchg_type xtype, const struct nlmsghdr *nlh, const struct nlatt
 
 SEC("kprobe/ip_set_create")
 int BPF_KPROBE(ip_set_create, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_CREATE, nlh, attr);
 }
 
 SEC("kprobe/ip_set_destroy")
 int BPF_KPROBE(ip_set_destroy, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_DESTROY, nlh, attr);
 }
 
 SEC("kprobe/ip_set_flush")
 int BPF_KPROBE(ip_set_flush, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_FLUSH, nlh, attr);
 }
 
 SEC("kprobe/ip_set_rename")
 int BPF_KPROBE(ip_set_rename, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_RENAME, nlh, attr);
 }
 
 SEC("kprobe/ip_set_swap")
 int BPF_KPROBE(ip_set_swap, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_SWAP, nlh, attr);
 }
 
 SEC("kprobe/ip_set_dump")
 int BPF_KPROBE(ip_set_dump, struct net *net, struct sock *ctnl, struct sk_buff *skb,
-		const struct nlmsghdr *nlh, const struct nlattr *attr[])
+		struct nlmsghdr *nlh, struct nlattr *attr[])
 {
 	return probe_enter(EXCHANGE_DUMP, nlh, attr);
 }
 
+/*
+ * Use similar approach if pointer can't be calculated in previous probes
+ * I was using those while I wasn't being able to align NL MSGs, I am now
+ *
 SEC("kprobe/__find_set_type_get")
 int BPF_KPROBE(__find_set_type_get, char *name)
 {
@@ -179,6 +190,7 @@ int BPF_KPROBE(find_set_and_id, struct ip_set_net *inst, char *name)
 
 	return 0;
 }
+*/
 
 static __always_inline int
 probe_return(enum xchg_type xtype, int ret)
