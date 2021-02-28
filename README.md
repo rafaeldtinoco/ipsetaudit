@@ -1,10 +1,10 @@
-# Auditing ipset calls portable eBPF daemon
+# Auditing ipset calls: a portable eBPF based userland daemon
 
-Unfortunately auditd is not capable of monitoring/logging calls to ipset
-subsystem as this is mainly managed by netlink sockets. For that reason,
-this daemon is needed: It creates an userland daemon that receives information
-from in-kernel netlink subsystem and logs it into syslog, this way you can
-audit changes to ipsets while they happen.
+Unfortunately [audit](https://github.com/linux-audit/audit-documentation/wiki) is not capable of logging
+[IPset](https://en.wikipedia.org/wiki/Netfilter#ipset) calls, as those are managed by a
+[netlink](https://en.wikipedia.org/wiki/Netlink) socket. **IPsetAudit** allows you to log (and audit)
+IPset creation/deletion/modifications by probing kernel internal netlink handlers and passing information
+to its userland daemon.
 
 > Note: This code is being activelly developed and will change until its final release.
 
