@@ -95,6 +95,12 @@ probe_enter(enum xchg_type xtype, struct nlmsghdr *nlh, struct nlattr *attr[])
 	case EXCHANGE_TEST:
 		break;
 		;;
+	case EXCHANGE_ADD:
+		break;
+		;;
+	case EXCHANGE_DEL:
+		break;
+		;;
 	}
 
 	return 0;
@@ -149,6 +155,19 @@ int BPF_KPROBE(ip_set_utest, struct net *net, struct sock *ctnl, struct sk_buff 
 	return probe_enter(EXCHANGE_TEST, nlh, attr);
 }
 
+SEC("kprobe/ip_set_uadd")
+int BPF_KPROBE(ip_set_uadd, struct net *net, struct sock *ctnl, struct sk_buff *skb,
+		struct nlmsghdr *nlh, struct nlattr *attr[])
+{
+	return probe_enter(EXCHANGE_ADD, nlh, attr);
+}
+
+SEC("kprobe/ip_set_udel")
+int BPF_KPROBE(ip_set_udel, struct net *net, struct sock *ctnl, struct sk_buff *skb,
+		struct nlmsghdr *nlh, struct nlattr *attr[])
+{
+	return probe_enter(EXCHANGE_DEL, nlh, attr);
+}
 
 /*
  * Use similar approach if pointer can't be calculated in previous probes

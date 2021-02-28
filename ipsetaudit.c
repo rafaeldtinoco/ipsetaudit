@@ -95,15 +95,44 @@ static int print_created(int fd)
 		if((err = bpf_map_lookup_elem(fd, &next_key, &xchg)) < 0)
 			EXITERR("failed to lookup created: %d\n", err);
 
+		// no need to be here, only root can send netlink to ipset
 		if ((username = get_username(xchg.uid)) == NULL)
 			username = "null";
 
 		switch (xchg.xtype) {
 		case EXCHANGE_CREATE:
-			what = "CREATE";
-			printf("(%s) user: %s (%d), command: %s (pid: %d) - %s ipset %s (type: %s) - %s\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what,
-				xchg.ipset_name, xchg.ipset_type, xchg.ret ? "ERROR" : "SUCCESS");
+			printf("(%s) %s (pid: %d) - CREATE %s (type: %s) - %s\n",
+				currtime, xchg.comm, next_key,
+				xchg.ipset_name, xchg.ipset_type,
+				xchg.ret ? "ERROR" : "SUCCESS");
+			goto after;
+			;;
+		case EXCHANGE_SWAP:
+			printf("(%s) %s (pid: %d) - SWAP %s <-> %s - %s\n",
+				currtime, xchg.comm, next_key,
+				xchg.ipset_name, xchg.ipset_newname,
+				xchg.ret ? "ERROR" : "SUCCESS");
+			goto after;
+			;;
+		case EXCHANGE_DUMP:
+			printf("(%s) %s (pid: %d) - SAVE/LIST %s - %s\n",
+				currtime, xchg.comm, next_key,
+				xchg.ipset_name,
+				xchg.ret ? "ERROR" : "SUCCESS");
+			goto after;
+			;;
+		case EXCHANGE_RENAME:
+			printf("(%s) %s (pid: %d) - RENAME %s -> %s - %s\n",
+				currtime, xchg.comm, next_key,
+				xchg.ipset_name, xchg.ipset_newname,
+				xchg.ret ? "ERROR" : "SUCCESS");
+			goto after;
+			;;
+		case EXCHANGE_TEST:
+			what = "TEST";
+			printf("(%s) %s (pid: %d) - %s %s\n",
+				currtime, xchg.comm, next_key,
+				what, xchg.ipset_name);
 			goto after;
 			;;
 		case EXCHANGE_DESTROY:
@@ -114,37 +143,20 @@ static int print_created(int fd)
 			what = "FLUSH";
 			break;
 			;;
-		case EXCHANGE_SWAP:
-			what = "SWAP";
-			printf("(%s) user: %s (%d), command: %s (pid: %d) - %s ipset %s to %s - %s\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what,
-				xchg.ipset_name, xchg.ipset_newname, xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
+		case EXCHANGE_ADD:
+			what = "ADD";
+			break;
 			;;
-		case EXCHANGE_DUMP:
-			what = "DUMP";
-			printf("(%s) user: %s (%d), command: %s (pid: %d) - IPSET %s (SAVE/LIST)\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what);
-			goto after;
-			;;
-		case EXCHANGE_TEST:
-			what = "TEST";
-			printf("(%s) user: %s (%d), command: %s (pid: %d) - IPSET %s\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what);
-			goto after;
-			;;
-		case EXCHANGE_RENAME:
-			what = "RENAME";
-			printf("(%s) user: %s (%d), command: %s (pid: %d) - %s ipset %s to %s - %s\n",
-				currtime, username, xchg.uid, xchg.comm, next_key, what,
-				xchg.ipset_name, xchg.ipset_newname, xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
+		case EXCHANGE_DEL:
+			what = "DEL";
+			break;
 			;;
 		}
 
-		printf("(%s) user: %s (%d), command: %s (pid: %d) - %s ipset %s - %s\n",
-			currtime, username, xchg.uid, xchg.comm, next_key, what,
-			xchg.ipset_name, xchg.ret ? "ERROR" : "SUCCESS");
+		printf("(%s) %s (pid: %d) - %s %s - %s\n",
+			currtime, xchg.comm, next_key,
+			what, xchg.ipset_name,
+		        xchg.ret ? "ERROR" : "SUCCESS");
 after:
 		if (username != NULL)
 			free(username);

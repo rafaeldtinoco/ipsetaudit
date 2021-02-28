@@ -52,6 +52,8 @@ enum xchg_type {
 	EXCHANGE_SWAP = 5,
 	EXCHANGE_DUMP = 6,
 	EXCHANGE_TEST = 7,
+	EXCHANGE_ADD = 8,
+	EXCHANGE_DEL = 9,
 };
 
 struct exchange {
