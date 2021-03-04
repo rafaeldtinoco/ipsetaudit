@@ -8,11 +8,19 @@
 #include <pwd.h>
 #include <fcntl.h>
 #include <syslog.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/resource.h>
+
+#include <linux/perf_event.h>
+#include <linux/hw_breakpoint.h>
 
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
@@ -23,6 +31,116 @@
 int daemonize = 0;
 static int bpfverbose = 0;
 static volatile bool exiting;
+
+#define __NR_perf_event_open 298
+
+#define PERF_BUFFER_PAGES	16
+#define PERF_POLL_TIMEOUT_MS	100
+
+// LEGACY KPROBE ATTACH (COULD BE PART OF LIBBPF BUT IT IS NOT)
+// (thanks to Andrii Nakryiko's idea)
+
+int
+poke_kprobe_events(bool add, const char* name, bool ret)
+{
+	char buf[256];
+	int fd, err;
+
+	fd = open("/sys/kernel/debug/tracing/kprobe_events", O_WRONLY | O_APPEND, 0);
+	if (fd < 0) {
+		err = -errno;
+		fprintf(stderr, "failed to open kprobe_events file: %d\n", err);
+		return err;
+	}
+
+	if (add)
+		snprintf(buf, sizeof(buf), "%c:kprobes/%s %s", ret ? 'r' : 'p', name, name);
+	else
+		snprintf(buf, sizeof(buf), "-:kprobes/%s", name);
+
+	err = write(fd, buf, strlen(buf));
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "failed to %s kprobe '%s': %d\n", add ? "add" : "remove", buf, err);
+	}
+	close(fd);
+
+	return err >= 0 ? 0 : err;
+}
+
+int
+add_kprobe_event(const char* func_name, bool is_kretprobe)
+{
+	return poke_kprobe_events(true /*add*/, func_name, is_kretprobe);
+}
+
+int
+remove_kprobe_event(const char* func_name, bool is_kretprobe)
+{
+	return poke_kprobe_events(false /*remove*/, func_name, is_kretprobe);
+}
+
+struct bpf_link *
+attach_kprobe_legacy(struct bpf_program* prog, const char* func_name, bool is_kretprobe)
+{
+	char fname[256];
+	struct perf_event_attr attr;
+	struct bpf_link* link;
+	int fd = -1, err, id;
+	FILE* f = NULL;
+
+	err = add_kprobe_event(func_name, is_kretprobe);
+	if (err) {
+		fprintf(stderr, "failed to create kprobe event: %d\n", err);
+		return NULL;
+	}
+
+	snprintf(fname, sizeof(fname), "/sys/kernel/debug/tracing/events/kprobes/%s/id", func_name);
+	f = fopen(fname, "r");
+	if (!f) {
+		fprintf(stderr, "failed to open kprobe id file '%s': %d\n", fname, -errno);
+		goto err_out;
+	}
+
+	if (fscanf(f, "%d\n", &id) != 1) {
+		fprintf(stderr, "failed to read kprobe id from '%s': %d\n", fname, -errno);
+		goto err_out;
+	}
+
+	fclose(f);
+	f = NULL;
+
+	memset(&attr, 0, sizeof(attr));
+	attr.size = sizeof(attr);
+	attr.config = id;
+	attr.type = PERF_TYPE_TRACEPOINT;
+	attr.sample_period = 1;
+	attr.wakeup_events = 1;
+
+	fd = syscall(__NR_perf_event_open, &attr, -1, 0, -1, PERF_FLAG_FD_CLOEXEC);
+	if (fd < 0) {
+		fprintf(stderr, "failed to create perf event for kprobe ID %d: %d\n", id, -errno);
+		goto err_out;
+	}
+
+	link = bpf_program__attach_perf_event(prog, fd);
+	err = libbpf_get_error(link);
+	if (err) {
+		fprintf(stderr, "failed to attach to perf event FD %d: %d\n", fd, err);
+		goto err_out;
+	}
+
+	return link;
+
+	err_out:
+	if (f)
+		fclose(f);
+	if (fd >= 0)
+		close(fd);
+
+	remove_kprobe_event(func_name, is_kretprobe);
+	return NULL;
+}
 
 // GENERAL
 
@@ -67,11 +185,6 @@ int bump_memlock_rlimit(void)
 	};
 
 	return setrlimit(RLIMIT_MEMLOCK, &rlim_new);
-}
-
-static void sig_handler(int sig)
-{
-	exiting = true;
 }
 
 char *get_username(uint32_t uid)
@@ -150,100 +263,68 @@ int dontmakemeadaemon(void)
 
 // OUTPUT
 
-static int print_created(int fd)
+static int output(struct event *e)
 {
 	char *currtime, *username, *what;
-	uint32_t lookup_key = -2, next_key;
-	struct exchange xchg;
-	int err;
 
 	currtime = get_currtime();
 
-	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
+	// no need to be here, only root can send netlink to ipset
+	if ((username = get_username(e->uid)) == NULL)
+		username = "null";
 
-		if((err = bpf_map_lookup_elem(fd, &next_key, &xchg)) < 0)
-			EXITERR("failed to lookup created: %d\n", err);
-
-		// no need to be here, only root can send netlink to ipset
-		if ((username = get_username(xchg.uid)) == NULL)
-			username = "null";
-
-		switch (xchg.xtype) {
-		case EXCHANGE_CREATE:
-			OUTPUT("(%s) %s (pid: %d) - CREATE %s (type: %s) - %s\n",
-				currtime, xchg.comm, next_key,
-				xchg.ipset_name, xchg.ipset_type,
-				xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
-			;;
-		case EXCHANGE_SWAP:
-			OUTPUT("(%s) %s (pid: %d) - SWAP %s <-> %s - %s\n",
-				currtime, xchg.comm, next_key,
-				xchg.ipset_name, xchg.ipset_newname,
-				xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
-			;;
-		case EXCHANGE_DUMP:
-			OUTPUT("(%s) %s (pid: %d) - SAVE/LIST %s - %s\n",
-				currtime, xchg.comm, next_key,
-				xchg.ipset_name,
-				xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
-			;;
-		case EXCHANGE_RENAME:
-			OUTPUT("(%s) %s (pid: %d) - RENAME %s -> %s - %s\n",
-				currtime, xchg.comm, next_key,
-				xchg.ipset_name, xchg.ipset_newname,
-				xchg.ret ? "ERROR" : "SUCCESS");
-			goto after;
-			;;
-		case EXCHANGE_TEST:
-			what = "TEST";
-			OUTPUT("(%s) %s (pid: %d) - %s %s\n",
-				currtime, xchg.comm, next_key,
-				what, xchg.ipset_name);
-			goto after;
-			;;
-		case EXCHANGE_DESTROY:
-			what = "DESTROY";
-			break;
-			;;
-		case EXCHANGE_FLUSH:
-			what = "FLUSH";
-			break;
-			;;
-		case EXCHANGE_ADD:
-			what = "ADD";
-			break;
-			;;
-		case EXCHANGE_DEL:
-			what = "DEL";
-			break;
-			;;
-		}
-
-		OUTPUT("(%s) %s (pid: %d) - %s %s - %s\n",
-			currtime, xchg.comm, next_key,
-			what, xchg.ipset_name,
-		        xchg.ret ? "ERROR" : "SUCCESS");
-after:
-		if (username != NULL)
-			free(username);
-
-		lookup_key = next_key;
+	switch (e->etype) {
+	case EXCHANGE_CREATE:
+		OUTPUT("(%s) %s (pid: %d) - CREATE %s (type: %s)\n",
+				currtime, e->comm, e->pid, e->ipset_name, e->ipset_type);
+		goto after;
+		;;
+	case EXCHANGE_SWAP:
+		OUTPUT("(%s) %s (pid: %d) - SWAP %s <-> %s\n",
+				currtime, e->comm, e->pid, e->ipset_name, e->ipset_newname);
+		goto after;
+		;;
+	case EXCHANGE_DUMP:
+		OUTPUT("(%s) %s (pid: %d) - SAVE/LIST %s\n",
+				currtime, e->comm, e->pid, e->ipset_name);
+		goto after;
+		;;
+	case EXCHANGE_RENAME:
+		OUTPUT("(%s) %s (pid: %d) - RENAME %s -> %s\n",
+				currtime, e->comm, e->pid, e->ipset_name, e->ipset_newname);
+		goto after;
+		;;
+	case EXCHANGE_TEST:
+		what = "TEST";
+		OUTPUT("(%s) %s (pid: %d) - %s %s\n",
+				currtime, e->comm, e->pid, what, e->ipset_name);
+		goto after;
+		;;
+	case EXCHANGE_DESTROY:
+		what = "DESTROY";
+		break;
+		;;
+	case EXCHANGE_FLUSH:
+		what = "FLUSH";
+		break;
+		;;
+	case EXCHANGE_ADD:
+		what = "ADD";
+		break;
+		;;
+	case EXCHANGE_DEL:
+		what = "DEL";
+		break;
+		;;
 	}
+
+	OUTPUT("(%s) %s (pid: %d) - %s %s\n", currtime, e->comm, e->pid, what, e->ipset_name);
+
+after:
+	if (username != NULL)
+		free(username);
 
 	free(currtime);
-
-	lookup_key = -2;
-
-	while (!bpf_map_get_next_key(fd, &lookup_key, &next_key)) {
-
-		if((err = bpf_map_delete_elem(fd, &next_key)) < 0)
-			EXITERR("failed to cleanup created: %d", err);
-
-		lookup_key = next_key;
-	}
 
 	return 0;
 }
@@ -276,12 +357,30 @@ int usage(int argc, char **argv)
 	exit(0);
 }
 
+// PERF EVENTS
+
+void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
+{
+	struct event *e = data;
+
+	output(e);
+
+	return;
+}
+
+void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt)
+{
+	fprintf(stderr, "lost %llu events on CPU #%d\n", lost_cnt, cpu);
+}
+
 // EBPF USERLAND PORTION
 
 int main(int argc, char **argv)
 {
-	int opt, err = 0, pid_max, fd;
+	int opt, err = 0, pid_max;
 	struct ipsetaudit_bpf *obj;
+	struct perf_buffer_opts pb_opts;
+	struct perf_buffer *pb = NULL;
 
 	while ((opt = getopt(argc, argv, "hvd")) != -1) {
 		switch(opt) {
@@ -316,33 +415,63 @@ int main(int argc, char **argv)
 	if ((pid_max = get_pid_max()) < 0)
 		EXITERR("failed to get pid_max");
 
-	bpf_map__resize(obj->maps.exchange, pid_max);
-	bpf_map__resize(obj->maps.ongoing, pid_max);
-
 	if ((err = ipsetaudit_bpf__load(obj)))
-		CLEANERR("failed to load BPF object: %d", err);
+		CLEANERR("failed to load BPF object: %d\n", err);
 
-	if ((err = ipsetaudit_bpf__attach(obj)))
-		CLEANERR("failed to attach BPF programs");
+	// TODO: improve legacy binding bellow
 
-	fd = bpf_map__fd(obj->maps.exchange);
+	obj->links.ip_set_create = attach_kprobe_legacy(obj->progs.ip_set_create, "ip_set_create", false);
 
-	signal(SIGINT, sig_handler);
+	if (!obj->links.ip_set_create) {
+		WARN("kprobe attach using legacy debugfs API failed, trying perf attach");
+
+		// libipset does all the attachments in a single call
+		if ((err = ipsetaudit_bpf__attach(obj)))
+			CLEANERR("failed to attach BPF programs\n");
+	} else {
+
+		// if first legacy kprobe worked try all others
+		obj->links.ip_set_destroy = attach_kprobe_legacy(obj->progs.ip_set_destroy, "ip_set_destroy", false);
+		obj->links.ip_set_flush = attach_kprobe_legacy(obj->progs.ip_set_flush, "ip_set_flush", false);
+		obj->links.ip_set_rename = attach_kprobe_legacy(obj->progs.ip_set_rename, "ip_set_rename", false);
+		obj->links.ip_set_swap = attach_kprobe_legacy(obj->progs.ip_set_swap, "ip_set_swap", false);
+		obj->links.ip_set_dump = attach_kprobe_legacy(obj->progs.ip_set_dump, "ip_set_dump", false);
+		obj->links.ip_set_utest = attach_kprobe_legacy(obj->progs.ip_set_utest, "ip_set_utest", false);
+		obj->links.ip_set_uadd = attach_kprobe_legacy(obj->progs.ip_set_uadd, "ip_set_uadd", false);
+		obj->links.ip_set_udel = attach_kprobe_legacy(obj->progs.ip_set_udel, "ip_set_udel", false);
+
+		// if any legacy kprobe failed we cannot continue
+		if (!(obj->links.ip_set_destroy || obj->links.ip_set_flush || obj->links.ip_set_rename ||
+			obj->links.ip_set_swap || obj->links.ip_set_dump || obj->links.ip_set_utest ||
+			obj->links.ip_set_uadd || obj->links.ip_set_udel)) {
+			CLEANERR("failed to attach legacy probe");
+		}
+	}
+
+	pb_opts.sample_cb = handle_event;
+	pb_opts.lost_cb = handle_lost_events;
+
+	pb = perf_buffer__new(bpf_map__fd(obj->maps.events), PERF_BUFFER_PAGES, &pb_opts);
+
+	err = libbpf_get_error(pb);
+	if (err) {
+		pb = NULL;
+		fprintf(stderr, "failed to open perf buffer: %d\n", err);
+		goto cleanup;
+	}
+
+	printf("Tracing... Hit Ctrl-C to end.\n");
 
 	while (1) {
-		if ((err = print_created(fd)))
+		if ((err = perf_buffer__poll(pb, PERF_POLL_TIMEOUT_MS)) < 0)
 			break;
-
-		if (exiting)
-			break;
-
-		sleep(2);
 	}
 
 cleanup:
 	if (daemonize)
 		endlog();
 
+	perf_buffer__free(pb);
 	ipsetaudit_bpf__destroy(obj);
 
 	return err != 0;

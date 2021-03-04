@@ -3,22 +3,43 @@
 
 // GENERAL
 
+#define TASK_COMM_LEN 16
+#define IPSET_MAXNAMELEN 32
+
 extern int daemonize;
 
-#define TASK_COMM_LEN 16
+enum ev_type {
+	EXCHANGE_CREATE = 1,
+	EXCHANGE_DESTROY = 2,
+	EXCHANGE_FLUSH = 3,
+	EXCHANGE_RENAME = 4,
+	EXCHANGE_SWAP = 5,
+	EXCHANGE_DUMP = 6,
+	EXCHANGE_TEST = 7,
+	EXCHANGE_ADD = 8,
+	EXCHANGE_DEL = 9,
+};
+
+struct event {
+	pid_t pid;
+	char comm[TASK_COMM_LEN];
+	enum ev_type etype;
+	uint32_t uid;
+	uint32_t gid;
+	char ipset_name[IPSET_MAXNAMELEN];
+	char ipset_newname[IPSET_MAXNAMELEN];
+	char ipset_type[IPSET_MAXNAMELEN];
+	int ret;
+};
+
+// OUTPUT
 
 #define HERE fprintf(stderr, "line %d, file %s, function %s\n", __LINE__, __FILE__, __func__)
 
-#define OUTPUT(...)						\
-{								\
-	switch (daemonize) {					\
-	case 0:							\
-		fprintf(stdout, __VA_ARGS__);			\
-		break;						\
-	case 1:							\
-		syslog(LOG_USER | LOG_INFO, __VA_ARGS__);	\
-		break;						\
-	}							\
+#define WARN(...)			\
+{					\
+	fprintf(stderr, __VA_ARGS__);	\
+	fprintf(stderr, "\n");		\
 }
 
 #define EXITERR(...)			\
@@ -45,6 +66,18 @@ extern int daemonize;
 	goto cleanup;			\
 }
 
+#define OUTPUT(...)						\
+{								\
+	switch (daemonize) {					\
+	case 0:							\
+		fprintf(stdout, __VA_ARGS__);			\
+		break;						\
+	case 1:							\
+		syslog(LOG_USER | LOG_INFO, __VA_ARGS__);	\
+		break;						\
+	}							\
+}
+
 // IPSET RELATED
 
 typedef __u16 ip_set_id_t;
@@ -54,31 +87,6 @@ struct ip_set_net {
 	ip_set_id_t	ip_set_max;
 	bool		is_deleted;
 	bool		is_destroyed;
-};
-
-#define IPSET_MAXNAMELEN 32
-
-enum xchg_type {
-	EXCHANGE_CREATE = 1,
-	EXCHANGE_DESTROY = 2,
-	EXCHANGE_FLUSH = 3,
-	EXCHANGE_RENAME = 4,
-	EXCHANGE_SWAP = 5,
-	EXCHANGE_DUMP = 6,
-	EXCHANGE_TEST = 7,
-	EXCHANGE_ADD = 8,
-	EXCHANGE_DEL = 9,
-};
-
-struct exchange {
-	enum xchg_type xtype;
-	uint32_t uid;
-	uint32_t gid;
-	char comm[TASK_COMM_LEN];
-	char ipset_name[IPSET_MAXNAMELEN];
-	char ipset_newname[IPSET_MAXNAMELEN];
-	char ipset_type[IPSET_MAXNAMELEN];
-	int ret;
 };
 
 enum {
