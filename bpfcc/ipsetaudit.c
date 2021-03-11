@@ -24,6 +24,7 @@ struct data_t {
 	u32 pid;
 	u32 uid;
 	u32 gid;
+	u32 loginuid;
 	u32 ret;
 	enum ev_type etype;
 	char comm[TASK_COMM_LEN];
@@ -82,13 +83,15 @@ int probe_enter(enum ev_type etype, void *ctx, struct nlmsghdr *nlh, struct nlat
 	u64 ts = bpf_ktime_get_ns();
 
 	struct data_t data = {};
+	struct task_struct *task = (void *) bpf_get_current_task();
 
 	data.pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data.comm, sizeof(data.comm));
 
 	data.pid = tgid;
 	data.uid = uid;
-	data.uid = gid;
+	data.gid = gid;
+	data.loginuid = task->loginuid.val;
 	data.etype = etype;
 
 	// netlink parsing

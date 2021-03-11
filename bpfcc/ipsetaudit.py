@@ -23,6 +23,7 @@ class datastruct(ct.Structure):
         ("pid", ct.c_uint),
         ("uid", ct.c_uint),
         ("gid", ct.c_uint),
+        ("loginuid", ct.c_uint),
         ("ret", ct.c_uint),
         ("ev_type", ct.c_uint),
         ("comm", ct.c_char * TASK_COMM_LEN),
@@ -40,23 +41,23 @@ def callback(cpu, data, size):
     # display probed function and data from data struct (exchange with bpf code)
     #
     if event.ev_type == EXCHANGE_CREATE:
-        print("%s (pid: %d) - CREATE %s (type: %s)" % (event.comm, event.pid, event.ipset_name, event.ipset_type));
+        print("%s (pid: %d) (auid: %d) - CREATE %s (type: %s)" % (event.comm, event.pid, event.loginuid, event.ipset_name, event.ipset_type));
     if event.ev_type == EXCHANGE_SWAP:
-        print("%s (pid: %d) - SWAP %s <-> %s" % (event.comm, event.pid, event.ipset_name, event.ipset_newname));
+        print("%s (pid: %d) (auid: %d) - SWAP %s <-> %s" % (event.comm, event.pid, event.loginuid, event.ipset_name, event.ipset_newname));
     if event.ev_type == EXCHANGE_DUMP:
-        print("%s (pid: %d) - SAVE/LIST %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - SAVE/LIST %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
     if event.ev_type == EXCHANGE_RENAME:
-        print("%s (pid: %d) - RENAME %s -> %s" % (event.comm, event.pid, event.ipset_name, event.ipset_newname));
+        print("%s (pid: %d) (auid: %d) - RENAME %s -> %s" % (event.comm, event.pid, event.loginuid, event.ipset_name, event.ipset_newname));
     if event.ev_type == EXCHANGE_TEST:
-        print("%s (pid: %d) - TEST %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - TEST %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
     if event.ev_type == EXCHANGE_DESTROY:
-        print("%s (pid: %d) - DESTROY %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - DESTROY %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
     if event.ev_type == EXCHANGE_FLUSH:
-        print("%s (pid: %d) - FLUSH %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - FLUSH %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
     if event.ev_type == EXCHANGE_ADD:
-        print("%s (pid: %d) - ADD %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - ADD %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
     if event.ev_type == EXCHANGE_DEL:
-        print("%s (pid: %d) - DEL %s" % (event.comm, event.pid, event.ipset_name));
+        print("%s (pid: %d) (auid: %d) - DEL %s" % (event.comm, event.pid, event.loginuid, event.ipset_name));
 
 # MAIN
 
