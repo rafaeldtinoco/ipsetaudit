@@ -61,7 +61,7 @@ def callback(cpu, data, size):
 
 # MAIN
 
-b = BPF(src_file="ipsetaudit.c")
+b = BPF(src_file="ipsetaudit.bpf.c")
 b["events"].open_perf_buffer(callback)
 
 print("Tracing... Hit Ctrl-C to end.")
