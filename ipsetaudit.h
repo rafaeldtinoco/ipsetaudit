@@ -1,36 +1,7 @@
 #ifndef IPSETAUDIT_H_
 #define IPSETAUDIT_H_
 
-// GENERAL
-
-#define TASK_COMM_LEN 16
-#define IPSET_MAXNAMELEN 32
-
-extern int daemonize;
-
-enum ev_type {
-	EXCHANGE_CREATE = 1,
-	EXCHANGE_DESTROY = 2,
-	EXCHANGE_FLUSH = 3,
-	EXCHANGE_RENAME = 4,
-	EXCHANGE_SWAP = 5,
-	EXCHANGE_DUMP = 6,
-	EXCHANGE_TEST = 7,
-	EXCHANGE_ADD = 8,
-	EXCHANGE_DEL = 9,
-};
-
-struct event {
-	pid_t pid;
-	char comm[TASK_COMM_LEN];
-	enum ev_type etype;
-	uint32_t uid;
-	uint32_t gid;
-	char ipset_name[IPSET_MAXNAMELEN];
-	char ipset_newname[IPSET_MAXNAMELEN];
-	char ipset_type[IPSET_MAXNAMELEN];
-	int ret;
-};
+#ifdef NOTBCC
 
 // OUTPUT
 
@@ -78,6 +49,49 @@ struct event {
 	}							\
 }
 
+#else
+
+#include <uapi/linux/ptrace.h>
+#include <net/sock.h>
+
+BPF_PERF_OUTPUT(events);
+
+#endif // NOTBCC
+
+typedef unsigned int u32;
+
+// GENERAL
+
+#define TASK_COMM_LEN 16
+#define IPSET_MAXNAMELEN 32
+
+extern int daemonize;
+
+enum ev_type {
+	EXCHANGE_CREATE = 1,
+	EXCHANGE_DESTROY = 2,
+	EXCHANGE_FLUSH = 3,
+	EXCHANGE_RENAME = 4,
+	EXCHANGE_SWAP = 5,
+	EXCHANGE_DUMP = 6,
+	EXCHANGE_TEST = 7,
+	EXCHANGE_ADD = 8,
+	EXCHANGE_DEL = 9,
+};
+
+struct data_t {
+	u32 pid;
+	u32 uid;
+	u32 gid;
+	u32 loginuid;
+	u32 ret;
+	enum ev_type etype;
+	char comm[TASK_COMM_LEN];
+	char ipset_name[IPSET_MAXNAMELEN];
+	char ipset_newname[IPSET_MAXNAMELEN];
+	char ipset_type[IPSET_MAXNAMELEN];
+};
+
 // IPSET RELATED
 
 typedef __u16 ip_set_id_t;
@@ -114,4 +128,4 @@ enum {
 #define NLA_ALIGN(len)		(((len) + NLA_ALIGNTO - 1) & ~(NLA_ALIGNTO - 1))
 #define NLA_HDRLEN		((int) NLA_ALIGN(sizeof(struct nlattr)))
 
-#endif
+#endif // IPSETAUDIT_H_

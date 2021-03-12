@@ -263,7 +263,7 @@ int dontmakemeadaemon(void)
 
 // OUTPUT
 
-static int output(struct event *e)
+static int output(struct data_t *e)
 {
 	char *currtime, *username, *what;
 
@@ -275,29 +275,29 @@ static int output(struct event *e)
 
 	switch (e->etype) {
 	case EXCHANGE_CREATE:
-		OUTPUT("(%s) %s (pid: %d) - CREATE %s (type: %s)\n",
-				currtime, e->comm, e->pid, e->ipset_name, e->ipset_type);
+		OUTPUT("(%s) %s (pid: %d) (auid: %d) - CREATE %s (type: %s)\n",
+				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_type);
 		goto after;
 		;;
 	case EXCHANGE_SWAP:
-		OUTPUT("(%s) %s (pid: %d) - SWAP %s <-> %s\n",
-				currtime, e->comm, e->pid, e->ipset_name, e->ipset_newname);
+		OUTPUT("(%s) %s (pid: %d) (auid: %d) - SWAP %s <-> %s\n",
+				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_newname);
 		goto after;
 		;;
 	case EXCHANGE_DUMP:
-		OUTPUT("(%s) %s (pid: %d) - SAVE/LIST %s\n",
-				currtime, e->comm, e->pid, e->ipset_name);
+		OUTPUT("(%s) %s (pid: %d) (auid: %d) - SAVE/LIST %s\n",
+				currtime, e->comm, e->pid, e->loginuid, e->ipset_name);
 		goto after;
 		;;
 	case EXCHANGE_RENAME:
-		OUTPUT("(%s) %s (pid: %d) - RENAME %s -> %s\n",
-				currtime, e->comm, e->pid, e->ipset_name, e->ipset_newname);
+		OUTPUT("(%s) %s (pid: %d) (auid: %d) - RENAME %s -> %s\n",
+				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_newname);
 		goto after;
 		;;
 	case EXCHANGE_TEST:
 		what = "TEST";
-		OUTPUT("(%s) %s (pid: %d) - %s %s\n",
-				currtime, e->comm, e->pid, what, e->ipset_name);
+		OUTPUT("(%s) %s (pid: %d) (auid: %d) - %s %s\n",
+				currtime, e->comm, e->pid, e->loginuid, what, e->ipset_name);
 		goto after;
 		;;
 	case EXCHANGE_DESTROY:
@@ -318,7 +318,7 @@ static int output(struct event *e)
 		;;
 	}
 
-	OUTPUT("(%s) %s (pid: %d) - %s %s\n", currtime, e->comm, e->pid, what, e->ipset_name);
+	OUTPUT("(%s) %s (pid: %d) (auid: %d) - %s %s\n", currtime, e->comm, e->pid, e->loginuid, what, e->ipset_name);
 
 after:
 	if (username != NULL)
@@ -361,7 +361,7 @@ int usage(int argc, char **argv)
 
 void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 {
-	struct event *e = data;
+	struct data_t *e = data;
 
 	output(e);
 
