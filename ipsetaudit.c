@@ -233,7 +233,7 @@ int makemeadaemon(void)
 	default:	exit(0);
 	}
 
-	umask(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	umask(022);
 
 	if (chdir("/") == -1)
 		return -1;
@@ -256,7 +256,7 @@ int dontmakemeadaemon(void)
 {
 	fprintf(stdout, "Foreground mode...<Ctrl-C> or or SIG_TERM to end it.\n");
 
-	umask(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	umask(022);
 
 	return 0;
 }
@@ -269,35 +269,40 @@ static int output(struct data_t *e)
 
 	currtime = get_currtime();
 
-	// no need to be here, only root can send netlink to ipset
-	if ((username = get_username(e->uid)) == NULL)
-		username = "null";
+       if ((username = get_username(e->loginuid)) == NULL)
+                username = "null";
 
-	switch (e->etype) {
-	case EXCHANGE_CREATE:
-		OUTPUT("(%s) %s (pid: %d) (auid: %d) - CREATE %s (type: %s)\n",
-				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_type);
+        switch (e->etype) {
+        case EXCHANGE_CREATE:
+                OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - CREATE %s (type: %s)\n",
+                                currtime, e->comm, e->pid, username,
+                                e->loginuid, e->ipset_name,
+                                e->ipset_type);
 		goto after;
 		;;
 	case EXCHANGE_SWAP:
-		OUTPUT("(%s) %s (pid: %d) (auid: %d) - SWAP %s <-> %s\n",
-				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_newname);
+		OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - SWAP %s <-> %s\n",
+				currtime, e->comm, e->pid, username, e->loginuid,
+				e->ipset_name, e->ipset_newname);
 		goto after;
 		;;
 	case EXCHANGE_DUMP:
-		OUTPUT("(%s) %s (pid: %d) (auid: %d) - SAVE/LIST %s\n",
-				currtime, e->comm, e->pid, e->loginuid, e->ipset_name);
+		OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - SAVE/LIST %s\n",
+				currtime, e->comm, e->pid, username, e->loginuid,
+				e->ipset_name);
 		goto after;
 		;;
 	case EXCHANGE_RENAME:
-		OUTPUT("(%s) %s (pid: %d) (auid: %d) - RENAME %s -> %s\n",
-				currtime, e->comm, e->pid, e->loginuid, e->ipset_name, e->ipset_newname);
+		OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - RENAME %s -> %s\n",
+				currtime, e->comm, e->pid, username, e->loginuid,
+				e->ipset_name, e->ipset_newname);
 		goto after;
 		;;
 	case EXCHANGE_TEST:
 		what = "TEST";
-		OUTPUT("(%s) %s (pid: %d) (auid: %d) - %s %s\n",
-				currtime, e->comm, e->pid, e->loginuid, what, e->ipset_name);
+		OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - %s %s\n", currtime,
+				e->comm, e->pid, username, e->loginuid, what,
+				e->ipset_name);
 		goto after;
 		;;
 	case EXCHANGE_DESTROY:
@@ -318,7 +323,9 @@ static int output(struct data_t *e)
 		;;
 	}
 
-	OUTPUT("(%s) %s (pid: %d) (auid: %d) - %s %s\n", currtime, e->comm, e->pid, e->loginuid, what, e->ipset_name);
+	OUTPUT("(%s) %s (pid: %d) (username: %s - uid: %d) - %s %s\n",
+			currtime, e->comm, e->pid, username, e->loginuid,
+			what, e->ipset_name);
 
 after:
 	if (username != NULL)
