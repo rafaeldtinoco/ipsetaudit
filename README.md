@@ -6,7 +6,7 @@ Unfortunately [audit](https://github.com/linux-audit/audit-documentation/wiki) i
 IPset creation/deletion/modifications by probing kernel internal netlink handlers and passing information
 to its userland daemon.
 
-> Note: This code is being activelly developed and will change until its final release.
+> Note: This code served me as base for some other projects. Feel free to use it but don't expect to be maintained. If you are here for the eBPF example, you should use [conntracker](https://github.com/rafaeldtinoco/conntracker) or [portablebpf](https://github.com/rafaeldtinoco/portablebpf) instead.
 
 ## Output examples
 
